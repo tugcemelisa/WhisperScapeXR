@@ -1,14 +1,14 @@
 using System;
 using System.Collections;
-using System.Text;
-using UnityEngine;
-using UnityEngine.Networking;
-using Newtonsoft.Json.Linq;
 using System.IO;
-using GLTFast;
-using System.Collections.Generic;
+using System.Text;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using UnityEngine;
+using UnityEngine.Networking;
+using GLTFast;
+using UnityEditor;
 
 public class MeshyManager : MonoBehaviour
 {
@@ -22,7 +22,7 @@ public class MeshyManager : MonoBehaviour
 
     public Transform spawnPoint;
     public Material defaultMaterial;
-    public Camera mainCamera;
+    public Material fallbackMaterial;
 
     private string apiKey;
 
@@ -38,11 +38,12 @@ public class MeshyManager : MonoBehaviour
     {
         if (!string.IsNullOrEmpty(prompt))
         {
+            Debug.Log("Sending prompt to Meshy: " + prompt);
             StartCoroutine(SendPromptToMeshy(prompt));
         }
         else
         {
-            Debug.LogError("❌ Prompt is empty. Cannot send to Meshy.");
+            Debug.LogError("Prompt is empty. Cannot generate model.");
         }
     }
 
@@ -71,27 +72,28 @@ public class MeshyManager : MonoBehaviour
 
         if (request.result == UnityWebRequest.Result.Success)
         {
-            string responseText = request.downloadHandler.text;
-            JObject response = JObject.Parse(responseText);
+            JObject response = JObject.Parse(request.downloadHandler.text);
             string taskId = response["result"]?.ToString();
 
             if (!string.IsNullOrEmpty(taskId))
             {
-                Debug.Log("✅ Task ID received: " + taskId);
-                StartCoroutine(CheckTaskProgressV2(taskId));
+                Debug.Log("Task ID received: " + taskId);
+                StartCoroutine(CheckTaskProgress(taskId));
             }
             else
             {
-                Debug.LogError("❌ Task ID is empty.\nResponse: " + responseText);
+                Debug.LogError("Task ID is missing. Spawning fallback cube.");
+                SpawnFallbackCube("No Task ID");
             }
         }
         else
         {
-            Debug.LogError("❌ Meshy API Error (POST): " + request.responseCode + " - " + request.downloadHandler.text);
+            Debug.LogError("POST failed: " + request.downloadHandler.text);
+            SpawnFallbackCube("POST Error");
         }
     }
 
-    IEnumerator CheckTaskProgressV2(string taskId)
+    IEnumerator CheckTaskProgress(string taskId)
     {
         string checkUrl = $"https://api.meshy.ai/v2/text-to-3d/{taskId}";
 
@@ -107,27 +109,34 @@ public class MeshyManager : MonoBehaviour
                 JObject response = JObject.Parse(request.downloadHandler.text);
                 string status = response["status"]?.ToString();
                 int progress = response["progress"]?.ToObject<int>() ?? 0;
-
-                Debug.Log($"⏳ Model is loading... {progress}%");
+                Debug.Log("Model generation progress: " + progress + "%");
 
                 if (status == "completed")
                 {
                     string modelUrl = response["result"]?.ToString();
                     if (!string.IsNullOrEmpty(modelUrl))
                     {
-                        Debug.Log("📦 Model URL received: " + modelUrl);
+                        Debug.Log("Model URL received: " + modelUrl);
                         StartCoroutine(LoadGLBModel(modelUrl));
                     }
                     else
                     {
-                        Debug.LogError("❌ Model URL is empty.");
+                        Debug.LogError("Model URL missing. Spawning fallback cube.");
+                        SpawnFallbackCube("No Model URL");
                     }
+                    break;
+                }
+                else if (status == "failed")
+                {
+                    Debug.LogError("Generation failed. Spawning fallback cube.");
+                    SpawnFallbackCube("Generation Failed");
                     break;
                 }
             }
             else
             {
-                Debug.LogError("❌ Meshy API Error (GET): " + request.error);
+                Debug.LogError("GET failed: " + request.downloadHandler.text);
+                SpawnFallbackCube("GET Error");
                 break;
             }
 
@@ -145,68 +154,82 @@ public class MeshyManager : MonoBehaviour
 
         if (loadingTask.IsFaulted || !loadingTask.Result)
         {
-            Debug.LogError("❌ Failed to load GLB model.");
+            Debug.LogError("❌ GLB model load failed.");
+            SpawnFallbackCube("GLB Load Failed");
             yield break;
         }
 
-        GameObject importedModel = new GameObject("MeshyModel_" + DateTime.Now.ToString("HHmmss"));
+        GameObject model = new GameObject("MeshyModel_" + DateTime.Now.ToString("HHmmss"));
+        Task<bool> instantiatingTask = gltf.InstantiateMainSceneAsync(model.transform);
 
-        Task<bool> instantiatingTask = gltf.InstantiateMainSceneAsync(importedModel.transform);
         while (!instantiatingTask.IsCompleted)
             yield return null;
 
         if (instantiatingTask.IsFaulted || !instantiatingTask.Result)
         {
-            Debug.LogError("❌ Failed to instantiate GLB model.");
+            Debug.LogError("❌ Instantiation failed.");
+            Destroy(model);
+            SpawnFallbackCube("Instantiation Failed");
             yield break;
         }
 
-        importedModel.transform.position = spawnPoint != null ? spawnPoint.position : Vector3.zero;
-        importedModel.transform.localScale = Vector3.one * 10;
-        importedModel.layer = LayerMask.NameToLayer("Default");
-        Debug.Log("✅ Model spawned at: " + importedModel.transform.position);
-
-        MeshRenderer renderer = importedModel.GetComponentInChildren<MeshRenderer>();
-        if (renderer == null)
+        if (model.transform.childCount == 0 || model.GetComponentsInChildren<MeshFilter>().Length == 0)
         {
-            renderer = importedModel.AddComponent<MeshRenderer>();
-            Debug.LogWarning("⚠️ No MeshRenderer found. Default MeshRenderer added.");
+            Debug.LogError("❌ Model instantiated but has no mesh. Spawning fallback.");
+            Destroy(model);
+            SpawnFallbackCube("Empty Mesh");
+            yield break;
         }
 
-        MeshFilter filter = importedModel.GetComponentInChildren<MeshFilter>();
-        if (filter == null)
+        model.transform.position = spawnPoint != null ? spawnPoint.position : Vector3.zero;
+        model.transform.localScale = Vector3.one * 10f;
+        Debug.Log("✅ Model spawned at: " + model.transform.position + " with children: " + model.transform.childCount);
+
+        if (model.GetComponentInChildren<MeshRenderer>() == null)
         {
-            importedModel.AddComponent<MeshFilter>();
-            Debug.LogWarning("⚠️ No MeshFilter found. Default MeshFilter added.");
+            model.AddComponent<MeshRenderer>();
+            Debug.LogWarning("⚠️ MeshRenderer added.");
         }
 
-        if (renderer.material == null && defaultMaterial != null)
+        if (defaultMaterial != null)
         {
-            renderer.material = defaultMaterial;
-            Debug.Log("🎨 Default material applied to the model.");
+            foreach (var rend in model.GetComponentsInChildren<MeshRenderer>())
+            {
+                if (rend.material == null)
+                    rend.material = defaultMaterial;
+            }
         }
 
-        if (importedModel.GetComponentInChildren<Collider>() == null)
+        if (model.GetComponentInChildren<Collider>() == null)
         {
-            importedModel.AddComponent<BoxCollider>();
-            Debug.LogWarning("⚠️ No Collider found. Default BoxCollider added.");
+            model.AddComponent<BoxCollider>();
         }
 
-        if (mainCamera != null)
-        {
-            mainCamera.transform.LookAt(importedModel.transform);
-            Debug.Log("🎥 Camera now looking at the spawned model.");
-            StartCoroutine(ResetCameraLookAfterDelay(importedModel.transform));
-        }
+#if UNITY_EDITOR
+        string path = "Assets/GeneratedPrefabs";
+        if (!Directory.Exists(path))
+            Directory.CreateDirectory(path);
+
+        string prefabPath = Path.Combine(path, model.name + ".prefab");
+        PrefabUtility.SaveAsPrefabAssetAndConnect(model, prefabPath, InteractionMode.UserAction);
+        Debug.Log("💾 Model saved as prefab at: " + prefabPath);
+#endif
     }
 
-    IEnumerator ResetCameraLookAfterDelay(Transform target)
+    void SpawnFallbackCube(string reason)
     {
-        yield return new WaitForSeconds(3f);
-        if (mainCamera != null && target != null)
+        GameObject cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        cube.name = "FallbackCube_" + reason.Replace(" ", "_");
+        cube.transform.position = spawnPoint != null ? spawnPoint.position : Vector3.zero;
+        cube.transform.localScale = Vector3.one * 1.5f;
+
+        if (fallbackMaterial != null)
         {
-            mainCamera.transform.LookAt(target);
-            Debug.Log("🎥 Camera realigned to model after delay.");
+            Renderer renderer = cube.GetComponent<Renderer>();
+            renderer.material = fallbackMaterial;
+            Debug.Log("Fallback material applied.");
         }
+
+        Debug.Log("Fallback cube spawned due to: " + reason);
     }
 }
