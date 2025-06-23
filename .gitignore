@@ -84,7 +84,7 @@ crashlytics-build.properties
 /[Aa]ssets/Unity.VisualScripting.Generated/VisualScripting.Core/Property Providers
 /[Aa]ssets/Unity.VisualScripting.Generated/VisualScripting.Core/Property Providers.meta
 
-# ChatGpt Api 
+# ChatGpt & Meshy Api 
 config.json
 
 # Nova Package

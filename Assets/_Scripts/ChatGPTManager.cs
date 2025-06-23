@@ -14,6 +14,7 @@ public class ConfigData
 public class ChatGPTManager : MonoBehaviour
 {
     private string apiKey;
+    public string lastGeneratedPrompt { get; private set; }  
 
     void Awake()
     {
@@ -35,12 +36,13 @@ public class ChatGPTManager : MonoBehaviour
         }
     }
 
-    public void RequestSuggestion(string prompt, System.Action<string> onResponse)
+    public void RequestSuggestion(string prompt, Action<string> onResponse)
     {
+        lastGeneratedPrompt = prompt;
         StartCoroutine(SendPrompt(prompt, onResponse));
     }
 
-    IEnumerator SendPrompt(string promptText, System.Action<string> onResponse)
+    IEnumerator SendPrompt(string promptText, Action<string> onResponse)
     {
         string jsonBody = "{\"model\": \"gpt-4\", \"messages\": [{\"role\": \"user\", \"content\": \"" + promptText + "\"}]}";
         UnityWebRequest req = new UnityWebRequest("https://api.openai.com/v1/chat/completions", "POST");
@@ -56,8 +58,6 @@ public class ChatGPTManager : MonoBehaviour
         if (req.result == UnityWebRequest.Result.Success)
         {
             string result = req.downloadHandler.text;
-
-           
             var wrapper = JsonUtility.FromJson<ChatResponseWrapper>("{\"wrapper\":" + result + "}");
             string aiText = wrapper.wrapper.choices[0].message.content.Trim();
 
