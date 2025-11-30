@@ -1,5 +1,6 @@
 # WhisperScapeXR
 WhisperScape VR is an emotionally immersive XR experience where players shape dreamlike environments through a hybrid prompt system.
+https://youtu.be/B948YvGk2JQ
 
 # Part 1: Scoping
 ## Idea
@@ -46,7 +47,7 @@ Core Features (Completed):
 - **Prompt system** that creates structured phrases based on tags
 - **ChatGPT** integrated for flexible, creative prompt logic
 - **Meshy AI** runtime 3D model generation using prompt data
-- **GLB model loading** with fallback cube and error handling
+- **GLB model loading** with fallback cube and error handlinghttps://github.com/tugcemelisa/WhisperScapeXR
 - Tag-based **prefab creation** and dynamic scene setup in Unity
 - Full VR interaction with **XR Origin Hands** and smooth locomotion
 
